@@ -5,7 +5,7 @@ WORKDIR /opt/ep_ws
 ENV ENV_ROBOT_MODE=sim
 
 # copy sources
-COPY src /opt/ep_ws/src
+COPY src ./src
 
 # install dependencies
 RUN apt-key adv --keyserver keyserver.ubuntu.com --recv-key F6E65AC044F831AC80A06380C8B3A55A6F3EFCDE || apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv-key F6E65AC044F831AC80A06380C8B3A55A6F3EFCDE
@@ -24,11 +24,10 @@ RUN apt-get update \
     &&  rm -rf /var/lib/apt/lists/* \
     &&  apt-get clean
 
-# build 
-RUN source /opt/workspace/devel_isolated/setup.bash \
-    &&  catkin_make install --use-ninja -DSETUPTOOLS_DEB_LAYOUT=OFF \
-    &&  echo "source /opt/ep_ws/devel/setup.bash" >> ~/.bashrc
+# copy scripts
+COPY build.sh start.sh ./
 
-# start script
-COPY start.sh /opt
-CMD /opt/ros/noetic/env.sh /opt/ep_ws/devel/env.sh /opt/start.sh
+# build
+RUN ./build.sh
+
+CMD ./start.sh
