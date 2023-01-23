@@ -19,10 +19,13 @@ RUN apt-get update \
             ros-noetic-depthimage-to-laserscan \
             ros-noetic-global-planner \
             ros-noetic-map-server \
-    &&  pip3 install -i https://mirrors.bfsu.edu.cn/pypi/web/simple \
-            scipy \
     &&  rm -rf /var/lib/apt/lists/* \
     &&  apt-get clean
+RUN pip3 install -i https://mirrors.bfsu.edu.cn/pypi/web/simple \
+        autopep8 \
+        scipy \
+    &&  rm -rf ~/.cache/pip/
+
 
 # copy scripts
 COPY build.sh start.sh ./
