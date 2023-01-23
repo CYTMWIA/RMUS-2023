@@ -4,46 +4,43 @@
 import rospy
 from std_msgs.msg import UInt8MultiArray, Int32MultiArray
 from rmus_solution.srv import switch, setgoal, graspsignal
+from typing import List
+from functools import partial
+from navi_control import Navi
 
 def get_boxid_blockid_inorder(gameinfo):
     return [0,1,2], [gameinfo[0], gameinfo[1], gameinfo[2]]
 
+def wait_for_services(services: List[str]):
+    for ser in services:
+        while not rospy.is_shutdown():
+            try:
+                rospy.wait_for_service(ser, 1.0)
+                break
+            except:
+                rospy.logwarn(f"Waiting for '{ser}' Service")
+                rospy.sleep(0.5)
+
+
 if __name__ == '__main__':
     rospy.init_node("gamecore_node")
 
-    while not rospy.is_shutdown():
-        try:
-            rospy.wait_for_service("/set_navigation_goal", 1.0)
-            break
-        except:
-            rospy.logwarn("Waiting for set_navigation_goal Service")
-            rospy.sleep(0.5)
-
-    while not rospy.is_shutdown():
-        try:
-            rospy.wait_for_service("/let_manipulater_work", 1.0)
-            break
-        except:
-            rospy.logwarn("Waiting for let_manipulater_work Service")
-            rospy.sleep(0.5)
-
-    while not rospy.is_shutdown():
-        try:
-            rospy.wait_for_service("/image_processor_switch_mode", 1.0)
-            break
-        except:
-            rospy.logwarn("Waiting for image_processor_switch_mode Service")
-            rospy.sleep(0.5)
-
+    wait_for_services([
+        "/set_navigation_goal", 
+        "/let_manipulater_work", 
+        "/image_processor_switch_mode"
+    ])
     rospy.loginfo("Get all rospy sevice!")
+
     navigation = rospy.ServiceProxy("/set_navigation_goal", setgoal)
+    navi = lambda point_name: navigation(Navi.point(point_name), point_name)
     trimer = rospy.ServiceProxy("/let_manipulater_work", graspsignal)
     img_switch_mode = rospy.ServiceProxy("/image_processor_switch_mode", switch)
     rospy.sleep(2)
 
     trim_res = trimer(0, "")
     response = img_switch_mode(9)
-    navigation_result = navigation(9, "")
+    navigation_result = navi("noticeboard")
 
     gameinfo = rospy.wait_for_message("/get_gameinfo", UInt8MultiArray, timeout=7)
     while gameinfo.data[0] == 0 or gameinfo.data[1] == 0 or gameinfo.data[2] == 0:
@@ -52,7 +49,7 @@ if __name__ == '__main__':
        rospy.sleep(0.5)
 
     response = img_switch_mode(0)
-   
+    
     for i, target in enumerate(gameinfo.data):
         navigation_result = navigation(target, "")
 
