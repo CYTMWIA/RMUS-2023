@@ -1,15 +1,25 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-import rospy
-from std_msgs.msg import UInt8MultiArray, Int32MultiArray
-from rmus_solution.srv import switch, setgoal, graspsignal
-from typing import List
 from functools import partial
-from navi_control import Navi
+from math import pi as PI
+from typing import List
 
-def get_boxid_blockid_inorder(gameinfo):
-    return [0,1,2], [gameinfo[0], gameinfo[1], gameinfo[2]]
+import rospy
+from geometry_msgs.msg import Pose, Twist
+from navi import EpPose, Navi
+from rmus_solution.srv import graspsignal, setgoal, switch
+from std_msgs.msg import Int32MultiArray, UInt8MultiArray
+from rmus_solution.msg import SquareArray
+# 预定义的路径点、名称: 位置(pose_x, pose_y, yaw), 误差容限(pose, angle)
+PRE_DEFINED_POSE = {
+    "home": EpPose(0.00, 0.00, 0.00, 0.02, 0.05),
+    "noticeboard": EpPose(0.00, 1.60, 0.00),
+    "station-1": EpPose(1.15, 1.91, 0.00, 0.075, 0.1),
+    "station-2": EpPose(1.15, 1.80, 0.00, 0.075, 0.1),
+    "station-3": EpPose(1.15, 1.65, 0.00, 0.075, 0.1),
+}
+
 
 def wait_for_services(services: List[str]):
     for ser in services:
@@ -22,66 +32,40 @@ def wait_for_services(services: List[str]):
                 rospy.sleep(0.5)
 
 
+def make_speed_setter(cmd_vel: str):
+    pub = rospy.Publisher(cmd_vel, Twist, queue_size=1)
+    def func(x, y, az):
+        twist = Twist()
+        twist.linear.z = 0.0
+        twist.linear.x = x
+        twist.linear.y = y
+        twist.angular.z = az
+        twist.angular.x = 0.0
+        twist.angular.y = 0.0
+        pub.publish(twist)
+    return func
+
+def get_target_blocks():
+    while not rospy.is_shutdown():
+        sqrs: SquareArray = rospy.wait_for_message("/squares", SquareArray)
+        high_sqrs= []
+        for sqr in sqrs.data:
+            h = sum([p.z for p in sqr.points])/4
+            if h>0.4:
+                ya = sum([p.y for p in sqr.points])/4
+                high_sqrs.append((sqr.id, ya))
+        if len(high_sqrs)==3:
+            break
+    high_sqrs.sort(key=lambda s: s[1], reverse=True)
+    return [q[0] for q in high_sqrs]
+        
 if __name__ == '__main__':
     rospy.init_node("gamecore_node")
 
-    wait_for_services([
-        "/set_navigation_goal", 
-        "/let_manipulater_work", 
-        "/image_processor_switch_mode"
-    ])
-    rospy.loginfo("Get all rospy sevice!")
+    set_speed = make_speed_setter("/cmd_vel")
+    navi = Navi()
 
-    navigation = rospy.ServiceProxy("/set_navigation_goal", setgoal)
-    navi = lambda point_name: navigation(Navi.point(point_name), point_name)
-    trimer = rospy.ServiceProxy("/let_manipulater_work", graspsignal)
-    img_switch_mode = rospy.ServiceProxy("/image_processor_switch_mode", switch)
-    rospy.sleep(2)
+    navi.goto(PRE_DEFINED_POSE["noticeboard"])
+    targets = get_target_blocks()
+    rospy.loginfo(f"TARGETS: {targets}")
 
-    trim_res = trimer(0, "")
-    response = img_switch_mode(9)
-    navigation_result = navi("noticeboard")
-
-    gameinfo = rospy.wait_for_message("/get_gameinfo", UInt8MultiArray, timeout=7)
-    while gameinfo.data[0] == 0 or gameinfo.data[1] == 0 or gameinfo.data[2] == 0:
-       gameinfo = rospy.wait_for_message("/get_gameinfo", UInt8MultiArray, timeout=7)
-       rospy.logwarn("Waiting for gameinfo detection.")
-       rospy.sleep(0.5)
-
-    response = img_switch_mode(0)
-    
-    for i, target in enumerate(gameinfo.data):
-        navigation_result = navigation(target, "")
-
-        response = img_switch_mode(target)
-        rospy.sleep(0.5)
-        trimer_response = trimer(1,"")
-
-        try:
-            rospy.sleep(0.5)
-            blockinfo = rospy.wait_for_message("/get_blockinfo", Int32MultiArray, timeout=0.1)
-            rospy.sleep(0.5)
-            blockinfo2 = rospy.wait_for_message("/get_blockinfo", Int32MultiArray, timeout=0.1)
-
-            if blockinfo.data[-1] != blockinfo2.data[-1]:
-                rospy.logwarn("Catch Falied")
-                rospy.sleep(3.0)
-                trimer_response = trimer(1,"")
-                while trimer_response.res == False:
-                    trimer_response = trimer(1,"")
-                rospy.loginfo("Another Catch completed")
-            else:
-                rospy.loginfo("Catch success")
-        except:
-            rospy.logerr("Catch possible error")
-
-        response = img_switch_mode(0)
-        navigation_result = navigation(6+i, "")
-
-        response = img_switch_mode(6+i)
-        rospy.sleep(0.5)
-        trimer_response = trimer(2,"")
-        response = img_switch_mode(0)
-
-    navigation_result = navigation(0, "")
-    response = img_switch_mode(0)

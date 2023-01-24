@@ -253,32 +253,6 @@ def classification(frame, quads, template_ids=range(1, 9)):
         out_img = cv2.threshold(out_img, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)[1]
         wrapped_img_list.append(out_img)
 
-        resize = False
-        if resize:
-            try:
-                out_img[:3, :] = 0
-                out_img[47:, :] = 0
-                out_img[:, :3] = 0
-                out_img[:, 47:] = 0
-                num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(
-                    out_img
-                )
-                for label_i in range(1, num_labels):
-                    if stats[label_i, cv2.CC_STAT_AREA].astype(float) < 35:  # 原50
-                        out_img[labels == label_i] = 0
-
-                nonzero_img = np.nonzero(out_img)
-                left, right = np.min(nonzero_img[0]), np.max(nonzero_img[0])
-                top, bottom = np.min(nonzero_img[1]), np.max(nonzero_img[1])
-                right, bottom = min(right + 1, 49), min(bottom + 1, 49)
-                nonzero_img = out_img[left:right, top:bottom]
-                nonzero_img = cv2.resize(
-                    nonzero_img, (36, 36), interpolation=cv2.INTER_NEAREST
-                )
-                out_img = np.zeros((50, 50), dtype=np.uint8)
-                out_img[7 : 7 + 36, 7 : 7 + 36] = nonzero_img
-            except:
-                rospy.loginfo("resize trick failed, back to original img as tempate")
         out_img = map_img77(out_img)
 
         match_candidate = []
@@ -293,12 +267,12 @@ def classification(frame, quads, template_ids=range(1, 9)):
         for tid in template_ids:
             for tt in range(4):
                 diff_img = cv2.absdiff(templates[tid - 1], match_candidate[tt])
-                sum = np.sum(diff_img) / 255.0 / diff_img.size
+                sum = np.count_nonzero(diff_img)
                 if min_diff > sum:
                     min_diff = sum
                     min_diff_target = tid
 
-        if min_diff < 0.2:
+        if min_diff < 2: # threshold
             quads_ID.append(min_diff_target)
             minpoints_list.append(min_diff)
         else:
@@ -341,7 +315,7 @@ def marker_detection(
                     (bbox[0], bbox[1]),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.5,
-                    (255, 255, 255),
+                    (0, 0, 255),
                     2,
                 )
             except:
@@ -350,7 +324,7 @@ def marker_detection(
     ids = [i for i in range(len(quads_ID)) if quads_ID[i] >= 1 and quads_ID[i] <= 8]
     return (
         [quads_ID[_] for _ in ids],
-        [quads[_] for _ in ids],
+        [np.squeeze(quads[_]) for _ in ids],
         [area_list[_] for _ in ids],
         [tvec_list[_] for _ in ids],
         [rvec_list[_] for _ in ids],

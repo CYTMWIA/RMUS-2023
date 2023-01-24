@@ -7,6 +7,13 @@ find_package(catkin REQUIRED COMPONENTS
   rospy
   std_msgs
   message_generation
+  sensor_msgs
+)
+
+add_message_files(
+  FILES
+  Square.msg
+  SquareArray.msg
 )
 
 add_service_files(
@@ -20,10 +27,11 @@ generate_messages(
   DEPENDENCIES
   geometry_msgs
   std_msgs
+  sensor_msgs
 )
 
 catkin_package(
- CATKIN_DEPENDS geometry_msgs roscpp rospy std_msgs message_runtime
+ CATKIN_DEPENDS geometry_msgs roscpp rospy std_msgs message_runtime sensor_msgs
 )
 
 include_directories(
