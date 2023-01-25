@@ -20,6 +20,9 @@ class Navi:
         self.move_base_client = SimpleActionClient(
             "/move_base", MoveBaseAction)
         self.move_base_client.wait_for_server()
+        self.state = "init"
+        self.last_goal = None
+        self.last_paused_pose = None
 
     def _send_goal(self, pose: EpPose):
         simple_goal = MoveBaseGoal()
@@ -36,10 +39,31 @@ class Navi:
         self.move_base_client.send_goal(simple_goal)
 
     def goto(self, pose: EpPose, blocking=True):
+        self.state = "running"
         rospy.loginfo(f"GOTO {pose}")
         self._send_goal(pose)
+        self.last_goal = pose
         if blocking:
             self.move_base_client.wait_for_result()
+            self.state = "finished"
             return self.move_base_client.get_result()
         else:
             return None
+
+    def is_finished(self):
+        if self.move_base_client.get_state() == 3:
+            self.state = "finished"
+        return self.state == "finished"
+
+    def pause(self):
+        self.state = "paused"
+        self.move_base_client.cancel_all_goals()
+        # TODO: remember current position
+        pass
+
+    def resume(self):
+        self.state = "running"
+        if self.last_paused_pose != None:
+            self.goto(self.last_paused_pose)
+            self.last_paused_pose = None
+        self.goto(self.last_goal)
