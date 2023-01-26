@@ -139,7 +139,7 @@ def square_detection(grayImg, camera_matrix, area_filter_size=30, height_range=(
             father_contours.append(contours[i])
         contours = father_contours
     except:
-        rospy.loginfo("Nothing detected in hierarchy")
+        # rospy.loginfo("Nothing detected in hierarchy")
         cv2.imwrite("./debug.png", grayImg)
 
     if area_filter_size < 200:

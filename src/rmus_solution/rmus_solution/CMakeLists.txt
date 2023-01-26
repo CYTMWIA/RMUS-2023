@@ -31,7 +31,7 @@ generate_messages(
 )
 
 catkin_package(
- CATKIN_DEPENDS geometry_msgs roscpp rospy std_msgs message_runtime sensor_msgs
+ CATKIN_DEPENDS geometry_msgs roscpp rospy std_msgs message_runtime sensor_msgs nav_msgs
 )
 
 include_directories(
