@@ -68,10 +68,10 @@ class Navi:
         res = self.make_plan(
             self.get_posestamped_in_map(EpPose(0, 0, 0, frame="base_link")),
             ps,
-            0.001
+            0
         )
-        rospy.loginfo(res.plan.poses[-1])
-        rospy.loginfo(ps)
+        # rospy.loginfo(res.plan.poses[-1])
+        # rospy.loginfo(ps)
         return len(res.plan.poses) > 0
 
     def _send_goal(self, pose: EpPose):
