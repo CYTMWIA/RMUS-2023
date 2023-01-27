@@ -141,15 +141,17 @@ def square_avg_point(sqr: Square):
     return pt
 
 
-def find_reachable_near_point(navi: Navi, point):
-    for r in [0, pi/4, pi*2/4, pi*3/4, pi]:
-        xd = math.cos(r)*0.3
-        yd = math.sin(r)*0.3
-        p1 = EpPose(point.x-xd, point.y+yd, -r)
-        p2 = EpPose(p1.x, point.y-yd, r)
-        if navi.is_reachable(p1, "base_link"):
+def find_reachable_work_pose(navi: Navi, point):
+    for r in [pi*2/4, pi/4, pi*2/4, pi*3/4, pi]:
+        xd = math.cos(r)*0.45
+        yd = math.sin(r)*0.45
+        p1 = EpPose(point.x-xd, point.y+yd, -r,
+                    frame="camera_aligned_depth_to_color_frame")
+        p2 = EpPose(p1.x, point.y-yd, r,
+                    frame="camera_aligned_depth_to_color_frame")
+        if navi.is_reachable(p1):
             return p1
-        if navi.is_reachable(p2, "base_link"):
+        if navi.is_reachable(p2):
             return p2
     return None
 
@@ -166,9 +168,30 @@ if __name__ == '__main__':
     ####################################
     # temporary debug
     ####################################
-    aim_block(set_speed, 4)
-    manipulator.grab_block()
-    manipulator.release_block()
+    target_ids = [1]
+    while not rospy.is_shutdown():
+        sqrs = get_squares_in_view()
+        target_sqrs = square_filter_by_id(sqrs, target_ids)
+        rospy.loginfo(f"target squares in view {[s.id for s in target_sqrs]}")
+        target_block_id = None
+        target_work_point = None
+        if len(target_sqrs):
+            target_blocks = []
+            for sqr in target_sqrs:
+                p_avg = square_avg_point(sqr)
+                dis = math.sqrt(p_avg.x*p_avg.x +
+                                p_avg.y*p_avg.y + p_avg.z*p_avg.z)
+                target_blocks.append((sqr.id, dis, p_avg))
+            target_blocks.sort(key=lambda b: b[1])
+            pt = target_blocks[0][2]
+            rospy.loginfo(pt)
+            target_work_point = find_reachable_work_pose(navi, pt)
+        if target_work_point:
+            break
+    navi.goto(target_work_point)
+    rospy.loginfo("Work point arrived")
+    rospy.sleep(3)
+    navi.goto(PRE_DEFINED_POSE["home"])
     exit(0)
     ####################################
 
@@ -200,7 +223,7 @@ if __name__ == '__main__':
                     target_block_id = None
                     target_work_point = None
                     for tid, dis, block_point in target_blocks:
-                        work = find_reachable_near_point(navi, block_point)
+                        work = find_reachable_work_pose(navi, block_point)
                         if (1 < dis) or (tid not in target_ids):
                             continue
                         target_block_id = tid
