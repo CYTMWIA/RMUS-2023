@@ -26,6 +26,7 @@ sleep 10
 
 docker run -it --rm --name client --network net-sim \
 	--cpus=5.6 -m 8192M \
+	-v $(pwd)/.vscode-server:/root/.vscode-server \
 	-v $(pwd)/src/rmus_solution:/opt/ep_ws/src/rmus_solution \
 	-e ROS_MASTER_URI=http://ros-master:11311 \
 	-e DISPLAY=$DISPLAY \
