@@ -135,7 +135,7 @@ class GameBehavior:
         sum_x, sum_y, n_pts = 0, 0, 0
         for sqr in sqrs:
             sorted_by_z = sorted(sqr.points, key=lambda p: p.z)
-            if sorted_by_z[-1].z-sorted_by_z[0].z < 2:
+            if sorted_by_z[-1].z-sorted_by_z[0].z < 0.02:
                 sum_x += sum([p.x for p in sorted_by_z])/len(sorted_by_z)
                 sum_y += sum([p.y for p in sorted_by_z])/len(sorted_by_z)
                 n_pts += 1
@@ -144,23 +144,54 @@ class GameBehavior:
                 if pt1.y == pt2.y:
                     continue
                 elif pt1.x == pt2.x:
-                    sum_x += pt1.x+0.0225
+                    sum_x += pt1.x+0.025
                     sum_y += (pt1.y + pt2.y)/2
                     n_pts += 1
                     continue
-                if pt1.y < pt2.y: # make sure pt1.y > pt2.y
+                if pt1.x > pt2.x:  # make sure pt1.x < pt2.x
                     pt1, pt2 = pt2, pt1
-                d = (pt1.x-pt2.x)/(pt1.y-pt2.y)
-                dy = math.sqrt((0.0225**2)/(d*d+1))
-                dx = d*dy
-                if 0<d:
-                    sum_y += -dy + (pt1.y+pt2.y)/2
-                    sum_x += dx + (pt1.x+pt2.x)/2
-                else:
-                    sum_y += dy + (pt1.y+pt2.y)/2
-                    sum_x += -dx + (pt1.x+pt2.x)/2
+                d = (pt2.y-pt1.y)/(pt2.x-pt1.x)
+                rad = math.atan(-d)
+                sum_y += (pt1.y+pt2.y)/2 + math.sin(rad)*0.025
+                sum_x += (pt1.x+pt2.x)/2 + math.cos(rad)*0.025
                 n_pts += 1
         return sum_x/n_pts, sum_y/n_pts
+
+    def calc_block_round_poses(self, sqrs: List[Square], dis: float):
+        for sqr in sqrs:
+            sorted_by_z = sorted(sqr.points, key=lambda p: p.z)
+            if sorted_by_z[-1].z-sorted_by_z[0].z < 0.02:
+                continue
+            else:
+                pt1, pt2 = sorted_by_z[0], sorted_by_z[1]
+                if pt1.y == pt2.y:
+                    continue
+                elif pt1.x == pt2.x:
+                    cx, cy = (pt1.x+pt2.x)/2+0.025, (pt1.y+pt2.y)/2
+                    return [EpPose(cx-dis, cy, 0,
+                                   frame="camera_aligned_depth_to_color_frame"),
+                            EpPose(cx+dis, cy, pi,
+                                   frame="camera_aligned_depth_to_color_frame"),
+                            EpPose(cx, cy-dis, pi/2,
+                                   frame="camera_aligned_depth_to_color_frame"),
+                            EpPose(cx, cy+dis, -pi/2,
+                                   frame="camera_aligned_depth_to_color_frame"),]
+
+                if pt1.x > pt2.x:  # make sure pt1.x < pt2.x
+                    pt1, pt2 = pt2, pt1
+                d = (pt2.y-pt1.y)/(pt2.x-pt1.x)
+                dx = math.sqrt((0.025**2)/(d**2+1))
+                dy = d*dx
+                cx, cy = (pt1.x+pt2.x)/2+dx, (pt1.y+pt2.y)/2+dy
+                res = []
+                for r in [0, pi/2, pi, -pi/2]:
+                    rad = math.atan(d) + r
+                    dy = math.sin(rad)*dis
+                    dx = math.cos(rad)*dis
+                    res.append(EpPose(cx + dx, cy + dy, pi+rad,
+                                      frame="camera_aligned_depth_to_color_frame"))
+                return res
+        return []
 
     def aim_block(self, block_id: int, expect_x: float, expect_y: float):
         pid_y = Pid(-3.0, -0.020, 0)
@@ -194,19 +225,10 @@ class GameBehavior:
         self.set_speed(0, 0)
         return lost <= 5
 
-    def find_reachable_work_pose(self, point):
-        for r in [0, pi/4, pi*2/4, pi*3/4, pi]:
-            xd = math.cos(r)*0.45
-            yd = math.sin(r)*0.45
-            pl = EpPose(point.x-xd, point.y+yd, -r,
-                        frame="camera_aligned_depth_to_color_frame")
-            pr = EpPose(pl.x, point.y-yd, r,
-                        frame="camera_aligned_depth_to_color_frame")
-            if self.navi.is_reachable(pr):
-                return pr
-            if self.navi.is_reachable(pl):
-                return pl
-        return None
+    def find_reachable_grabbing_poses(self, sqrs: List[Square]):
+        poses = self.calc_block_round_poses(sqrs, 0.5)
+        poses.sort(key=lambda p: p.x**2+p.y**2)
+        return [po for po in poses if self.navi.is_reachable(po)]
 
     ####################################
     # Test
@@ -220,29 +242,6 @@ class GameBehavior:
             rospy.loginfo(f"Arrived {pat}")
         self.navi.goto(PRE_DEFINED_POSE["home"])
 
-    def test_grab(self):
-        block_id = 1
-        aim_args_list = [
-            (block_id, 0.16, -0.025, ),
-            (block_id, 0.15, -0.025, ),
-            (block_id, 0.13, -0.025, ),
-            (block_id, 0.16, -0.025, ),
-        ]
-        for aim_args in aim_args_list:
-            rospy.loginfo(f"Aim with args: {aim_args}")
-            self.aim_block(*aim_args)
-            self.manipulator.grab_block()
-
-            rospy.sleep(1)
-            self.go_back(0.08)
-
-            confirm = get_squares_in_view()
-            if len(square_filter_by_id(confirm, [block_id])):
-                rospy.loginfo("Grab failed, try again")
-            else:
-                break
-        self.manipulator.release_block()
-
     ####################################
     # Behavior (FSM)
     ####################################
@@ -250,7 +249,7 @@ class GameBehavior:
     def end(self):
         rospy.loginfo(f"gg, let's go home")
         self.navi.goto(PRE_DEFINED_POSE["home"])
-        return lambda: exit(0)
+        return None
 
     def exchange_block(self, index: int):
         self.navi.goto(PRE_DEFINED_POSE[f"station-{index+1}"])
@@ -265,37 +264,47 @@ class GameBehavior:
         else:
             return self.end
 
-    def grab_block(self, work_pose: EpPose, block_id: int):
-        self.navi.goto(work_pose)
+    def grab_block(self, block_id: int):
+        aim_args_list = [
+            (block_id, 0.16, -0.03, ),
+            (block_id, 0.15, -0.03, ),
+            (block_id, 0.13, -0.03, ),
+            (block_id, 0.16, -0.03, ),
+        ]
+        for aim_args in aim_args_list:
+            rospy.loginfo(f"Aim with args: {aim_args}")
+            self.aim_block(*aim_args)
+            self.manipulator.grab_block()
+
+            rospy.sleep(1)
+            self.go_back(0.08)
+
+            confirm = get_squares_in_view()
+            if len(square_filter_by_id(confirm, [block_id])):
+                rospy.loginfo("Grab failed, try again")
+            else:
+                return lambda: self.exchange_block(self.target_id_list.index(block_id))
+
+        rospy.loginfo(
+            "Grab failed too many times, will try again next time see it")
+        # skip finding in current pose
+        self.navi.goto(self.next_pose_list[0])
+        self.last_pose = self.next_pose_list.pop(0)
+        return self.find_blocks
+
+    def goto_grabbing_pose(self, block_id: int):
         sqrs = get_squares_in_view()
         target_sqrs = square_filter_by_id(sqrs, [block_id])
-        if len(target_sqrs):
+        poses = self.find_reachable_grabbing_poses(target_sqrs)
+        rospy.loginfo(f"Found work pose candidates: {poses}")
+        if len(poses):
+            self.navi.goto(poses[0])
+            sqrs = get_squares_in_view()
+            target_sqrs = square_filter_by_id(sqrs, [block_id])
+            if len(target_sqrs):
+                return lambda: self.grab_block(block_id)
 
-            aim_args_list = [
-                (block_id, 0.16, -0.025, ),
-                (block_id, 0.15, -0.025, ),
-                (block_id, 0.13, -0.025, ),
-                (block_id, 0.16, -0.025, ),
-            ]
-            for aim_args in aim_args_list:
-                rospy.loginfo(f"Aim with args: {aim_args}")
-                self.aim_block(*aim_args)
-                self.manipulator.grab_block()
-
-                rospy.sleep(1)
-                self.go_back(0.08)
-
-                confirm = get_squares_in_view()
-                if len(square_filter_by_id(confirm, [block_id])):
-                    rospy.loginfo("Grab failed, try again")
-                else:
-                    return self.exchange_block(self.target_id_list.index(block_id))
-            rospy.loginfo(
-                "Grab failed too many times, will try again next time see it")
-
-        else:
-            rospy.loginfo("navi failed")
-
+        rospy.loginfo("goto_grabbing_pose failed")
         # skip finding in current pose
         self.navi.goto(self.next_pose_list[0])
         self.last_pose = self.next_pose_list.pop(0)
@@ -329,12 +338,11 @@ class GameBehavior:
                 target_blocks.sort(key=lambda b: b[1])
 
                 for tid, dis, block_point, h in target_blocks:
-                    work = self.find_reachable_work_pose(block_point)
                     if (1.5 < dis) or (0.4 < h) or (tid not in self.target_id_list):
                         continue
                     self.navi.pause()
                     rospy.loginfo(f"Block {tid} found, gogogo")
-                    return lambda: self.grab_block(work, tid)
+                    return lambda: self.goto_grabbing_pose(tid)
 
             if rotating:
                 break
@@ -366,6 +374,9 @@ class GameBehavior:
     def start_game(self):
         func = self.begin
         while not rospy.is_shutdown():
+            if func == None:
+                break
+
             label = func.__name__
             if label == "<lambda>":
                 label = inspect.getsource(func)
@@ -379,6 +390,11 @@ class GameBehavior:
 if __name__ == '__main__':
     rospy.init_node("gamecore_node")
 
-    GameBehavior().start_game()
-    # GameBehavior().test_patrol()
-    # GameBehavior().test_grab()
+    gb = GameBehavior()
+    gb.start_game()
+
+    # bid = 4
+    # # gb.goto_grab_block(bid)
+    # gb.grab_block(bid)
+    # gb.manipulator.release_block()
+    # gb.end()
