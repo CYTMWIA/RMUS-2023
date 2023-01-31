@@ -33,6 +33,9 @@ class ImgProcessor:
         self.pub_squares = rospy.Publisher(
             "/squares", SquareArray, queue_size=1)
 
+        self.fps_time = 0
+        self.fps_count = 0
+
         if verbose:
             self.vis_thread = Thread(target=self.visualization)
             self.vis_thread.start()
@@ -57,6 +60,13 @@ class ImgProcessor:
                 rospy.sleep(1)
 
     def image_callback(self, image, depth):
+        t = int(rospy.get_time())
+        if t != self.fps_time:
+            rospy.loginfo(f"image_callback fps: {self.fps_count}")
+            self.fps_time = t
+            self.fps_count = 0
+        self.fps_count += 1
+
         self.image = self.bridge.imgmsg_to_cv2(image, "bgr8")
         self.depth = self.bridge.imgmsg_to_cv2(depth, "32FC1")
 
