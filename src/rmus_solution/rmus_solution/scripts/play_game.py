@@ -76,12 +76,15 @@ def square_filter_by_id(sqrs: SquareArray, id_list: List[int]):
 
 
 def square_bbox(sqr: Square):
-    x_min = min([pt.x for pt in sqr.points])
-    x_max = max([pt.x for pt in sqr.points])
-    y_min = min([pt.y for pt in sqr.points])
-    y_max = max([pt.y for pt in sqr.points])
-    return ((x_min, y_min,), (x_max-x_min, y_max-y_min,), )
+    x_min = min([pt.x for pt in sqr.quads])
+    x_max = max([pt.x for pt in sqr.quads])
+    y_min = min([pt.y for pt in sqr.quads])
+    y_max = max([pt.y for pt in sqr.quads])
+    return (x_min, y_min, x_max-x_min, y_max-y_min,)
 
+def square_bbox_area(sqr: Square):
+    x,y,w,h = square_bbox(sqr)
+    return w*h
 
 def square_avg_point(sqr: Square):
     pt = sqr.points[0]
@@ -132,30 +135,23 @@ class GameBehavior:
         self.set_speed(0, 0, 0)
 
     def calc_block_center_point(self, sqrs: List[Square]):
-        sum_x, sum_y, n_pts = 0, 0, 0
+        sqrs = sorted(sqrs.copy(), key=square_bbox_area, reverse=True)
         for sqr in sqrs:
             sorted_by_z = sorted(sqr.points, key=lambda p: p.z)
             if sorted_by_z[-1].z-sorted_by_z[0].z < 0.02:
-                sum_x += sum([p.x for p in sorted_by_z])/len(sorted_by_z)
-                sum_y += sum([p.y for p in sorted_by_z])/len(sorted_by_z)
-                n_pts += 1
+                return sum([p.x for p in sorted_by_z])/len(sorted_by_z), sum([p.y for p in sorted_by_z])/len(sorted_by_z)
             else:
-                pt1, pt2 = sorted_by_z[0], sorted_by_z[1]
+                pt1, pt2 = sorted_by_z[-1], sorted_by_z[-2]
                 if pt1.y == pt2.y:
                     continue
                 elif pt1.x == pt2.x:
-                    sum_x += pt1.x+0.025
-                    sum_y += (pt1.y + pt2.y)/2
-                    n_pts += 1
-                    continue
+                    return pt1.x+0.025, (pt1.y + pt2.y)/2
                 if pt1.x > pt2.x:  # make sure pt1.x < pt2.x
                     pt1, pt2 = pt2, pt1
                 d = (pt2.y-pt1.y)/(pt2.x-pt1.x)
-                rad = math.atan(-d)
-                sum_y += (pt1.y+pt2.y)/2 + math.sin(rad)*0.025
-                sum_x += (pt1.x+pt2.x)/2 + math.cos(rad)*0.025
-                n_pts += 1
-        return sum_x/n_pts, sum_y/n_pts
+                rad = math.atan(-1/d)
+                return (pt1.x+pt2.x)/2 + math.cos(rad)*0.025, (pt1.y+pt2.y)/2 + math.sin(rad)*0.025,
+        return None
 
     def calc_block_round_poses(self, sqrs: List[Square], dis: float):
         for sqr in sqrs:
@@ -163,7 +159,7 @@ class GameBehavior:
             if sorted_by_z[-1].z-sorted_by_z[0].z < 0.02:
                 continue
             else:
-                pt1, pt2 = sorted_by_z[0], sorted_by_z[1]
+                pt1, pt2 = sorted_by_z[-1], sorted_by_z[-2]
                 if pt1.y == pt2.y:
                     continue
                 elif pt1.x == pt2.x:
@@ -194,31 +190,35 @@ class GameBehavior:
         return []
 
     def aim_block(self, block_id: int, expect_x: float, expect_y: float):
-        pid_y = Pid(-3.0, -0.020, 0)
-        pid_x = Pid(-1.0, -0.020, 0)
+        pid_y = Pid(-5.0, -0.02, 0)
+        pid_x = Pid(-1.5, -0.02, 0)
         r = rospy.Rate(20)
         lost = 0
+        stage = 0
         while not rospy.is_shutdown() and lost <= 5:
             sqrs: SquareArray = get_squares_in_view()
             target_squares = square_filter_by_id(sqrs, [block_id])
             if not len(target_squares):
                 rospy.loginfo(f"Square {block_id} not detected.")
                 lost += 1
-                continue
+                speed_x, speed_y = 0, 0
             else:
                 lost = 0
-            # avg_pts = [square_avg_point(s) for s in target_squares]
-            # avg_x = sum([p.x for p in avg_pts])/len(avg_pts)
-            # avg_y = sum([p.y for p in avg_pts])/len(avg_pts)
-            avg_x, avg_y = self.calc_block_center_point(target_squares)
-            err_y = expect_y-avg_y
-            err_x = expect_x-avg_x
-            # rospy.loginfo(f"ERR {err_x}, {err_y}")
-            if abs(err_x) < 0.01 and abs(err_y) < 0.01:
-                break
-            speed_y = pid_y(err_y)
-            speed_x = pid_x(err_x)
-            # speed_yaw = pid_yaw(err_yaw)
+                avg_x, avg_y = self.calc_block_center_point(target_squares)
+                err_y = expect_y-avg_y
+                err_x = expect_x-avg_x
+                rospy.loginfo(f"POS {avg_x}, {avg_y}")
+                rospy.loginfo(f"ERR {err_x}, {err_y}")
+                if stage == 0:
+                    speed_y = pid_y(err_y)
+                    speed_x = 0
+                    if abs(err_y) < 0.01:
+                        stage += 1
+                elif stage == 1:
+                    speed_y = pid_y(err_y)
+                    speed_x = pid_x(err_x)
+                    if abs(err_x) < 0.005 and abs(err_y) < 0.005:
+                        break
             # rospy.loginfo(f"SPEED {speed_d}, {speed_h}")
             self.set_speed(speed_x, speed_y)
             r.sleep()
@@ -268,7 +268,7 @@ class GameBehavior:
         aim_args_list = [
             (block_id, 0.16, -0.03, ),
             (block_id, 0.15, -0.03, ),
-            (block_id, 0.13, -0.03, ),
+            (block_id, 0.17, -0.03, ),
             (block_id, 0.16, -0.03, ),
         ]
         for aim_args in aim_args_list:
