@@ -26,24 +26,26 @@ PRE_DEFINED_POSE = {
         EpPose(1.15, 1.60, pi/2),
         EpPose(1.15, 1.60, -pi/2),
         EpPose(0.00, 1.60, -pi/2),
-        EpPose(0.00, 0.60, -pi/2),
-        EpPose(0.80, 0.60, -pi/2),
         EpPose(0.80, -0.8, -pi/2),
+        EpPose(0.80, -0.8, 0),
 
         EpPose(2.7, -0.8, 0),  # 凸
-        EpPose(1.8, -0.8, pi/2),
-        EpPose(2.6, -0.8, pi/2),
-
-        EpPose(2.55, 0.2, pi),
-        EpPose(2.55, 0.2, pi/2),
+        EpPose(2.7, -0.8, pi/2),
+        EpPose(2.7, -0.8, pi),
+        EpPose(2.55, -0.8, pi),
         EpPose(2.55, 1.0, pi),
+        EpPose(2.3, 1.0, pi),
         EpPose(2.3, 1.0, pi/2),
         EpPose(2.3, 2.7, pi/2),
+        EpPose(2.3, 2.7, pi),
+        EpPose(2.3, 2.7, pi/2),
 
-        EpPose(1.3, 2.7, pi),  # 左边区域
-        EpPose(1.3, 3.3, 0),
+        EpPose(1.3, 2.7, pi/2),  # 左边区域
+        EpPose(1.3, 3.3, pi/2),
+        EpPose(1.3, 3.3, pi),
 
         EpPose(0.8, 3.3, pi),  # 房间
+        EpPose(0.8, 3.3, -pi/2),
         EpPose(0.3, 3.3, -pi/2),
         EpPose(0.0, 2.5, -pi/2),
 
@@ -82,9 +84,11 @@ def square_bbox(sqr: Square):
     y_max = max([pt.y for pt in sqr.quads])
     return (x_min, y_min, x_max-x_min, y_max-y_min,)
 
+
 def square_bbox_area(sqr: Square):
-    x,y,w,h = square_bbox(sqr)
+    x, y, w, h = square_bbox(sqr)
     return w*h
+
 
 def square_avg_point(sqr: Square):
     pt = sqr.points[0]
@@ -189,7 +193,7 @@ class GameBehavior:
                 return res
         return []
 
-    def aim_block(self, block_id: int, expect_x: float, expect_y: float):
+    def aim_block(self, block_id: int, expect_x: float, expect_y: float, toleration_x: float, toleration_y: float):
         pid_y = Pid(-5.0, -0.02, 0)
         pid_x = Pid(-1.5, -0.02, 0)
         r = rospy.Rate(20)
@@ -207,17 +211,17 @@ class GameBehavior:
                 avg_x, avg_y = self.calc_block_center_point(target_squares)
                 err_y = expect_y-avg_y
                 err_x = expect_x-avg_x
-                rospy.loginfo(f"POS {avg_x}, {avg_y}")
-                rospy.loginfo(f"ERR {err_x}, {err_y}")
+                # rospy.loginfo(f"POS {avg_x}, {avg_y}")
+                # rospy.loginfo(f"ERR {err_x}, {err_y}")
                 if stage == 0:
                     speed_y = pid_y(err_y)
                     speed_x = 0
-                    if abs(err_y) < 0.01:
+                    if abs(err_y) < toleration_y*2:
                         stage += 1
                 elif stage == 1:
                     speed_y = pid_y(err_y)
                     speed_x = pid_x(err_x)
-                    if abs(err_x) < 0.005 and abs(err_y) < 0.005:
+                    if abs(err_x) < toleration_x and abs(err_y) < toleration_y:
                         break
             # rospy.loginfo(f"SPEED {speed_d}, {speed_h}")
             self.set_speed(speed_x, speed_y)
@@ -253,7 +257,9 @@ class GameBehavior:
 
     def exchange_block(self, index: int):
         self.navi.goto(PRE_DEFINED_POSE[f"station-{index+1}"])
-        self.aim_block(6+index, expect_x=0.16, expect_y=-0.04)
+        self.aim_block(6+index,
+                       expect_x=0.16, expect_y=-0.04,
+                       toleration_x=0.01, toleration_y=0.01)
         self.manipulator.release_block()
 
         self.target_id_list[index] = 0
@@ -266,10 +272,10 @@ class GameBehavior:
 
     def grab_block(self, block_id: int):
         aim_args_list = [
-            (block_id, 0.16, -0.03, ),
-            (block_id, 0.15, -0.03, ),
-            (block_id, 0.17, -0.03, ),
-            (block_id, 0.16, -0.03, ),
+            (block_id, 0.16, -0.03, 0.01, 0.005),
+            (block_id, 0.15, -0.03, 0.01, 0.005),
+            (block_id, 0.17, -0.03, 0.01, 0.005),
+            (block_id, 0.16, -0.03, 0.01, 0.005),
         ]
         for aim_args in aim_args_list:
             rospy.loginfo(f"Aim with args: {aim_args}")
@@ -338,7 +344,7 @@ class GameBehavior:
                 target_blocks.sort(key=lambda b: b[1])
 
                 for tid, dis, block_point, h in target_blocks:
-                    if (1.5 < dis) or (0.4 < h) or (tid not in self.target_id_list):
+                    if (2.0 < dis) or (0.4 < h) or (tid not in self.target_id_list):
                         continue
                     self.navi.pause()
                     rospy.loginfo(f"Block {tid} found, gogogo")
@@ -392,6 +398,8 @@ if __name__ == '__main__':
 
     gb = GameBehavior()
     gb.start_game()
+
+    # gb.test_patrol()
 
     # bid = 4
     # # gb.goto_grab_block(bid)
