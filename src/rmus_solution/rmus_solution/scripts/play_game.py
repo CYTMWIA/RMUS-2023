@@ -8,6 +8,7 @@ from math import pi
 from typing import List
 
 import rospy
+from actionlib_msgs.msg import GoalStatus as NaviStatus
 from geometry_msgs.msg import Twist
 from manipulator import Manipulator
 from navi import EpPose, Navi
@@ -22,34 +23,12 @@ PRE_DEFINED_POSE = {
     "station-2": EpPose(1.15, 1.80, 0.00, 0.075, 0.1),
     "station-3": EpPose(1.15, 1.65, 0.00, 0.075, 0.1),
     "patrol": [
-        EpPose(1.15, 1.60, 0),
-        EpPose(1.15, 1.60, pi/2),
-        EpPose(1.15, 1.60, -pi/2),
-        EpPose(0.00, 1.60, -pi/2),
-        EpPose(0.80, -0.8, -pi/2),
-        EpPose(0.80, -0.8, 0),
-
-        EpPose(2.7, -0.8, 0),  # 凸
-        EpPose(2.7, -0.8, pi/2),
-        EpPose(2.7, -0.8, pi),
-        EpPose(2.55, -0.8, pi),
-        EpPose(2.55, 1.0, pi),
-        EpPose(2.3, 1.0, pi),
-        EpPose(2.3, 1.0, pi/2),
-        EpPose(2.3, 2.7, pi/2),
-        EpPose(2.3, 2.7, pi),
-        EpPose(2.3, 2.7, pi/2),
-
-        EpPose(1.3, 2.7, pi/2),  # 左边区域
-        EpPose(1.3, 3.3, pi/2),
-        EpPose(1.3, 3.3, pi),
-
-        EpPose(0.8, 3.3, pi),  # 房间
-        EpPose(0.8, 3.3, -pi/2),
-        EpPose(0.3, 3.3, -pi/2),
-        EpPose(0.0, 2.5, -pi/2),
-
-        EpPose(0.0, 1.60, -pi/2),  # 回到观测点
+        EpPose(0.00, 1.60, 0.00),
+        EpPose(0.80, 0.80, 0.00),
+        EpPose(2.30, -0.6, 0),
+        EpPose(2.30, 1.00, 0),
+        EpPose(1.20, 3.00, 0),
+        EpPose(0.55, 3.20, 0),
     ],
 }
 
@@ -232,7 +211,30 @@ class GameBehavior:
     def find_reachable_grabbing_poses(self, sqrs: List[Square]):
         poses = self.calc_block_round_poses(sqrs, 0.5)
         poses.sort(key=lambda p: p.x**2+p.y**2)
-        return [po for po in poses if self.navi.is_reachable(po)]
+        return [self.navi.get_posestamped_in_map(po) for po in poses if self.navi.is_reachable(po)]
+
+    def detect_target_blocks(self):
+        sqrs = get_squares_in_view()
+        target_sqrs = square_filter_by_id(sqrs, self.target_id_list)
+        # rospy.loginfo(
+        #     f"target squares in view {[s.id for s in target_sqrs]}")
+
+        if len(target_sqrs):
+            target_blocks = []
+            for sqr in target_sqrs:
+                p_avg = square_avg_point(sqr)
+                dis = math.sqrt(p_avg.x*p_avg.x +
+                                p_avg.y*p_avg.y + p_avg.z*p_avg.z)
+                target_blocks.append((sqr.id, dis, p_avg, p_avg.z))
+            target_blocks.sort(key=lambda b: b[1])
+
+            for tid, dis, block_point, h in target_blocks:
+                if (2.0 < dis) or (0.4 < h) or (tid not in self.target_id_list):
+                    continue
+                rospy.loginfo(f"Block {tid} found, gogogo")
+                return tid
+        else:
+            return None
 
     ####################################
     # Test
@@ -256,7 +258,9 @@ class GameBehavior:
         return None
 
     def exchange_block(self, index: int):
-        self.navi.goto(PRE_DEFINED_POSE[f"station-{index+1}"])
+        while self.navi.goto(PRE_DEFINED_POSE[f"station-{index+1}"])!=NaviStatus.SUCCEEDED:
+            self.go_back(0.2)
+
         self.aim_block(6+index,
                        expect_x=0.16, expect_y=-0.04,
                        toleration_x=0.01, toleration_y=0.01)
@@ -265,8 +269,7 @@ class GameBehavior:
         self.target_id_list[index] = 0
         self.go_back(0.15)  # avoid navi stuck
         if any(self.target_id_list):
-            self.navi.goto(self.last_pose)
-            return self.find_blocks
+            return self.find_blocks_goto
         else:
             return self.end
 
@@ -296,68 +299,65 @@ class GameBehavior:
         # skip finding in current pose
         self.navi.goto(self.next_pose_list[0])
         self.last_pose = self.next_pose_list.pop(0)
-        return self.find_blocks
+        return self.find_blocks_goto
 
     def goto_grabbing_pose(self, block_id: int):
         sqrs = get_squares_in_view()
         target_sqrs = square_filter_by_id(sqrs, [block_id])
         poses = self.find_reachable_grabbing_poses(target_sqrs)
         rospy.loginfo(f"Found work pose candidates: {poses}")
-        if len(poses):
-            self.navi.goto(poses[0])
+        for ps in poses:
+            nv = self.navi.goto(ps)
+            if nv!=NaviStatus.SUCCEEDED:
+                rospy.loginfo("goto grabing pose failed, try next one")
+                continue
+
             sqrs = get_squares_in_view()
             target_sqrs = square_filter_by_id(sqrs, [block_id])
             if len(target_sqrs):
                 return lambda: self.grab_block(block_id)
 
-        rospy.loginfo("goto_grabbing_pose failed")
+        rospy.loginfo("goto_grabbing_pose all failed!")
         # skip finding in current pose
         self.navi.goto(self.next_pose_list[0])
         self.last_pose = self.next_pose_list.pop(0)
-        return self.find_blocks
+        return self.find_blocks_goto
 
-    def find_blocks(self):
+    def find_blocks_rotate(self):
+        t = 15
+        az = 2*pi/t
+        self.set_speed(0, 0, az)
+        end = rospy.get_time() + t
+
+        while (not rospy.is_shutdown()) and (rospy.get_time() < end):
+            tid = self.detect_target_blocks()
+            if tid:
+                self.set_speed(0, 0, 0)
+                return lambda: self.goto_grabbing_pose(tid)
+
+        self.set_speed(0, 0, 0)
+        self.last_pose = self.next_pose_list.pop(0)
+        return self.find_blocks_goto
+
+    def find_blocks_goto(self):
         if not len(self.next_pose_list):
             self.next_pose_list += PRE_DEFINED_POSE["patrol"].copy()
         rospy.loginfo(f"Finding: {self.target_id_list}")
 
         going_pose = self.next_pose_list[0]
-        rotating = ((going_pose.x == self.last_pose.x)
-                    and (going_pose.y == self.last_pose.y))
-        self.navi.goto_straight(going_pose, blocking=rotating)
+        self.navi.goto(going_pose, blocking=False)
 
-        while ((not rospy.is_shutdown())
-               and ((not self.navi.is_finished())
-                    or rotating)):
-            sqrs = get_squares_in_view()
-            target_sqrs = square_filter_by_id(sqrs, self.target_id_list)
-            # rospy.loginfo(
-            #     f"target squares in view {[s.id for s in target_sqrs]}")
+        while (not rospy.is_shutdown()) and (not self.navi.is_finished()):
+            tid = self.detect_target_blocks()
+            if tid:
+                self.navi.cancel()
+                return lambda: self.goto_grabbing_pose(tid)
 
-            if len(target_sqrs):
-                target_blocks = []
-                for sqr in target_sqrs:
-                    p_avg = square_avg_point(sqr)
-                    dis = math.sqrt(p_avg.x*p_avg.x +
-                                    p_avg.y*p_avg.y + p_avg.z*p_avg.z)
-                    target_blocks.append((sqr.id, dis, p_avg, p_avg.z))
-                target_blocks.sort(key=lambda b: b[1])
-
-                for tid, dis, block_point, h in target_blocks:
-                    if (2.0 < dis) or (0.4 < h) or (tid not in self.target_id_list):
-                        continue
-                    self.navi.pause()
-                    rospy.loginfo(f"Block {tid} found, gogogo")
-                    return lambda: self.goto_grabbing_pose(tid)
-
-            if rotating:
-                break
-
-        self.last_pose = self.next_pose_list.pop(0)
-        return self.find_blocks
+        return self.find_blocks_rotate
 
     def begin(self):
-        self.navi.goto_straight(PRE_DEFINED_POSE["noticeboard"])
+        while self.navi.goto(PRE_DEFINED_POSE["noticeboard"]) != NaviStatus.SUCCEEDED:
+            self.navi.goto(PRE_DEFINED_POSE["home"])
 
         while not rospy.is_shutdown():
             sqrs: SquareArray = get_squares_in_view()
@@ -375,7 +375,7 @@ class GameBehavior:
         self.target_id_list = [q[0] for q in high_sqrs]
 
         rospy.loginfo(f"Targets: {self.target_id_list}")
-        return self.find_blocks
+        return self.find_blocks_goto
 
     def start_game(self):
         func = self.begin
