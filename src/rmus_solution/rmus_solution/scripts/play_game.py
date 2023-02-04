@@ -48,11 +48,16 @@ def wait_for_services(services: List[str]):
 ########################################
 
 
-def get_squares_in_view() -> SquareArray:
-    return rospy.wait_for_message("/squares", SquareArray)
+def get_squares_in_view(ignore_hight=0.4) -> SquareArray:
+    sa: SquareArray = rospy.wait_for_message("/squares", SquareArray)
+    for i in range(len(sa.data)-1, -1, -1):
+        minz = min([p.z for p in sa.data[i].points])
+        if minz > ignore_hight:
+            sa.data.pop(i)
+    return sa
 
 
-def square_filter_by_id(sqrs: SquareArray, id_list: List[int]):
+def square_filter_by_id(sqrs: SquareArray, id_list: List[int]) -> List[Square]:
     return [sqr for sqr in sqrs.data if sqr.id in id_list]
 
 
@@ -69,15 +74,15 @@ def square_bbox_area(sqr: Square):
     return w*h
 
 
-def square_avg_point(sqr: Square):
-    pt = sqr.points[0]
-    for i in range(1, len(sqr.points)):
-        pt.x += sqr.points[i].x
-        pt.y += sqr.points[i].y
-        pt.z += sqr.points[i].z
-    pt.x /= len(sqr.points)
-    pt.y /= len(sqr.points)
-    pt.z /= len(sqr.points)
+def avg_point(points):
+    pt = points[0]
+    for i in range(1, len(points)):
+        pt.x += points[i].x
+        pt.y += points[i].y
+        pt.z += points[i].z
+    pt.x /= len(points)
+    pt.y /= len(points)
+    pt.z /= len(points)
     return pt
 
 ########################################
@@ -112,9 +117,9 @@ class GameBehavior:
         twist.angular.y = 0.0
         self.pub_cmd_vel.publish(twist)
 
-    def go_back(self, dis):
-        self.set_speed(-dis*2, 0, 0)
-        rospy.sleep(0.5)
+    def move(self, dis):
+        self.set_speed(dis, 0, 0)
+        rospy.sleep(1.0)
         self.set_speed(0, 0, 0)
 
     def calc_block_center_point(self, sqrs: List[Square]):
@@ -173,12 +178,11 @@ class GameBehavior:
         return []
 
     def aim_block(self, block_id: int, expect_x: float, expect_y: float, toleration_x: float, toleration_y: float):
-        pid_y = Pid(-5.0, -0.02, 0)
-        pid_x = Pid(-1.5, -0.02, 0)
+        pid_y = Pid(0.0025, 0.00005, -0.0015)
+        pid_x = Pid(0.0025, 0.00005, -0.0015)
         r = rospy.Rate(20)
         lost = 0
-        stage = 0
-        while not rospy.is_shutdown() and lost <= 5:
+        while not rospy.is_shutdown() and lost <= 10:
             sqrs: SquareArray = get_squares_in_view()
             target_squares = square_filter_by_id(sqrs, [block_id])
             if not len(target_squares):
@@ -187,26 +191,23 @@ class GameBehavior:
                 speed_x, speed_y = 0, 0
             else:
                 lost = 0
-                avg_x, avg_y = self.calc_block_center_point(target_squares)
-                err_y = expect_y-avg_y
-                err_x = expect_x-avg_x
+                sqrs_bbox = [(s, square_bbox(s)) for s in target_squares]
+                sqrs_bbox.sort(key=lambda sb: sb[1][2]*sb[1][2], reverse=True)
+                avg_pt = avg_point(sqrs_bbox[0][0].quads)
+                # avg_x, avg_y = self.calc_block_center_point(target_squares)
+                err_y = expect_y-avg_pt.y
+                err_x = expect_x-avg_pt.x
                 # rospy.loginfo(f"POS {avg_x}, {avg_y}")
-                # rospy.loginfo(f"ERR {err_x}, {err_y}")
-                if stage == 0:
-                    speed_y = pid_y(err_y)
-                    speed_x = 0
-                    if abs(err_y) < toleration_y*2:
-                        stage += 1
-                elif stage == 1:
-                    speed_y = pid_y(err_y)
-                    speed_x = pid_x(err_x)
-                    if abs(err_x) < toleration_x and abs(err_y) < toleration_y:
-                        break
+                rospy.loginfo(f"ERR {err_x}, {err_y}")
+                speed_y = pid_y(err_x)
+                speed_x = pid_x(err_y)
+                if abs(err_x) < toleration_x and abs(err_y) < toleration_y:
+                    break
             # rospy.loginfo(f"SPEED {speed_d}, {speed_h}")
             self.set_speed(speed_x, speed_y)
             r.sleep()
         self.set_speed(0, 0)
-        return lost <= 5
+        return lost <= 10
 
     def find_reachable_grabbing_poses(self, sqrs: List[Square]):
         poses = self.calc_block_round_poses(sqrs, 0.5)
@@ -222,7 +223,7 @@ class GameBehavior:
         if len(target_sqrs):
             target_blocks = []
             for sqr in target_sqrs:
-                p_avg = square_avg_point(sqr)
+                p_avg = avg_point(sqr.points)
                 dis = math.sqrt(p_avg.x*p_avg.x +
                                 p_avg.y*p_avg.y + p_avg.z*p_avg.z)
                 target_blocks.append((sqr.id, dis, p_avg, p_avg.z))
@@ -258,16 +259,14 @@ class GameBehavior:
         return None
 
     def exchange_block(self, index: int):
-        while self.navi.goto(PRE_DEFINED_POSE[f"station-{index+1}"])!=NaviStatus.SUCCEEDED:
-            self.go_back(0.2)
+        while self.navi.goto(PRE_DEFINED_POSE[f"station-{index+1}"]) != NaviStatus.SUCCEEDED:
+            self.move(-0.2)
 
-        self.aim_block(6+index,
-                       expect_x=0.16, expect_y=-0.04,
-                       toleration_x=0.01, toleration_y=0.01)
+        self.aim_block(6+index, 520, 340, 10, 10)
         self.manipulator.release_block()
 
         self.target_id_list[index] = 0
-        self.go_back(0.15)  # avoid navi stuck
+        self.move(-0.15)  # avoid navi stuck
         if any(self.target_id_list):
             return self.find_blocks_goto
         else:
@@ -275,18 +274,26 @@ class GameBehavior:
 
     def grab_block(self, block_id: int):
         aim_args_list = [
-            (block_id, 0.16, -0.03, 0.01, 0.005),
-            (block_id, 0.15, -0.03, 0.01, 0.005),
-            (block_id, 0.17, -0.03, 0.01, 0.005),
-            (block_id, 0.16, -0.03, 0.01, 0.005),
+            (block_id, 530, 330, 5, 5),
+            (block_id, 530, 330, 5, 5),
+            (block_id, 530, 330, 5, 5),
+            (block_id, 530, 330, 5, 5),
         ]
         for aim_args in aim_args_list:
             rospy.loginfo(f"Aim with args: {aim_args}")
             self.aim_block(*aim_args)
-            self.manipulator.grab_block()
+
+            self.manipulator._open_gripper()
+            rospy.sleep(1)
+            self.manipulator._down_arm()
+            rospy.sleep(1)
+            self.move(0.1)
+            self.manipulator._close_gripper()
+            rospy.sleep(1)
+            self.manipulator._reset_arm()
 
             rospy.sleep(1)
-            self.go_back(0.08)
+            self.move(-0.1)
 
             confirm = get_squares_in_view()
             if len(square_filter_by_id(confirm, [block_id])):
@@ -308,7 +315,7 @@ class GameBehavior:
         rospy.loginfo(f"Found work pose candidates: {poses}")
         for ps in poses:
             nv = self.navi.goto(ps)
-            if nv!=NaviStatus.SUCCEEDED:
+            if nv != NaviStatus.SUCCEEDED:
                 rospy.loginfo("goto grabing pose failed, try next one")
                 continue
 
@@ -360,7 +367,7 @@ class GameBehavior:
             self.navi.goto(PRE_DEFINED_POSE["home"])
 
         while not rospy.is_shutdown():
-            sqrs: SquareArray = get_squares_in_view()
+            sqrs: SquareArray = get_squares_in_view(ignore_hight=9999)
             high_sqrs = []
             for sqr in sqrs.data:
                 h = sum([p.z for p in sqr.points])/4
@@ -399,6 +406,7 @@ if __name__ == '__main__':
     gb = GameBehavior()
     gb.start_game()
 
+    # gb.aim_block(6, 530, 330, 10, 10)
     # gb.test_patrol()
 
     # bid = 4
