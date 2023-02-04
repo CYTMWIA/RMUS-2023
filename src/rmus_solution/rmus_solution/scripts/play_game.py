@@ -192,7 +192,7 @@ class GameBehavior:
             else:
                 lost = 0
                 sqrs_bbox = [(s, square_bbox(s)) for s in target_squares]
-                sqrs_bbox.sort(key=lambda sb: sb[1][2]*sb[1][2], reverse=True)
+                sqrs_bbox.sort(key=lambda sb: sb[1][2]*sb[1][3], reverse=True)
                 avg_pt = avg_point(sqrs_bbox[0][0].quads)
                 # avg_x, avg_y = self.calc_block_center_point(target_squares)
                 err_y = expect_y-avg_pt.y
