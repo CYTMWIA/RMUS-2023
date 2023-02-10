@@ -22,7 +22,17 @@ docker run -dit --rm --name sim-server --network net-sim \
 	-v /tmp/.X11-unix:/tmp/.X11-unix \
 	$SERVER_IMAGE 
 
-sleep 10
+# docker run -dit --rm --name ros-noetic --network net-sim \
+# 	-v $(pwd)/:/ws \
+# 	-e ROS_MASTER_URI=http://ros-master:11311 \
+# 	-e DISPLAY=$DISPLAY \
+# 	-e QT_X11_NO_MITSHM=1 \
+# 	-e NO_AT_BRIDGE=1 \
+# 	-e LIBGL_ALWAYS_SOFTWARE=1 \
+# 	-v /tmp/.X11-unix:/tmp/.X11-unix \
+#     osrf/ros:noetic-desktop-full-focal rqt
+
+# sleep 10
 
 docker run -it --rm --name client --network net-sim \
 	--cpus=5.6 -m 8192M \
