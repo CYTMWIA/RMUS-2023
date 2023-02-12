@@ -262,7 +262,7 @@ class GameBehavior:
         while self.navi.goto(PRE_DEFINED_POSE[f"station-{index+1}"]) != NaviStatus.SUCCEEDED:
             self.move(-0.2)
 
-        self.aim_block(6+index, 520, 340, 10, 10)
+        self.aim_block(6+index, 550, 340, 10, 10)
         self.manipulator.release_block()
 
         self.target_id_list[index] = 0
@@ -287,13 +287,13 @@ class GameBehavior:
             rospy.sleep(1)
             self.manipulator._down_arm()
             rospy.sleep(1)
-            self.move(0.1)
+            self.move(0.11)
             self.manipulator._close_gripper()
             rospy.sleep(1)
             self.manipulator._reset_arm()
 
             rospy.sleep(1)
-            self.move(-0.1)
+            self.move(-0.11)
 
             confirm = get_squares_in_view()
             if len(square_filter_by_id(confirm, [block_id])):
@@ -359,8 +359,12 @@ class GameBehavior:
             if tid:
                 self.navi.cancel()
                 return lambda: self.goto_grabbing_pose(tid)
-
-        return self.find_blocks_rotate
+        
+        if self.navi.move_base_client.get_state()==NaviStatus.SUCCEEDED:
+            return self.find_blocks_rotate
+        else:
+            self.move(-0.2)
+            return self.find_blocks_goto
 
     def begin(self):
         while self.navi.goto(PRE_DEFINED_POSE["noticeboard"]) != NaviStatus.SUCCEEDED:
@@ -400,7 +404,7 @@ class GameBehavior:
             rospy.loginfo(f"Leave <- {label}")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     rospy.init_node("gamecore_node")
 
     gb = GameBehavior()
